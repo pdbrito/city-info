@@ -70,7 +70,9 @@ func TestHandler_GetCityInfo(t *testing.T) {
 		cinfo.Description,
 	)
 
-	cis := cityinfoservice.NewCityInfoService(ws, wis, *logrus.New())
+	logger := logrus.New()
+	logger.Out = ioutil.Discard
+	cis := cityinfoservice.NewCityInfoService(ws, wis, *logger)
 
 	handler := internalHttp.NewHandler(cis)
 	server := httptest.NewServer(handler)
@@ -128,7 +130,9 @@ func TestHandler_GetCityInfo_ReturnsErrorResponseWhenWeatherServiceErrors(t *tes
 		"Mos Eisley, you will never find a more wretched hive of scum and villainy.",
 	)
 
-	cis := cityinfoservice.NewCityInfoService(ws, wis, *logrus.New())
+	logger := logrus.New()
+	logger.Out = ioutil.Discard
+	cis := cityinfoservice.NewCityInfoService(ws, wis, *logger)
 
 	handler := internalHttp.NewHandler(cis)
 	server := httptest.NewServer(handler)
@@ -169,6 +173,68 @@ func TestHandler_GetCityInfo_ReturnsErrorResponseWhenWeatherServiceErrors(t *tes
 			"unexpected error message in error response; got %v, want %v",
 			errResp.Error,
 			wsErr,
+		)
+	}
+}
+
+func TestHandler_GetCityInfo_ReturnsErrorResponseWhenWikiServiceErrors(t *testing.T) {
+	ws := newWeatherService(
+		nil,
+		weatherservice.Weather{
+			Temperature: 44.4,
+			Description: "hot and sandy",
+		},
+	)
+
+	wisErr := "something went wrong"
+	wis := newWikiService(
+		errors.New(wisErr),
+		"",
+	)
+
+	logger := logrus.New()
+	logger.Out = ioutil.Discard
+	cis := cityinfoservice.NewCityInfoService(ws, wis, *logger)
+
+	handler := internalHttp.NewHandler(cis)
+	server := httptest.NewServer(handler)
+
+	queryURL := fmt.Sprintf(
+		"%s/city-info?name=%s",
+		server.URL,
+		url.QueryEscape("Mos Eisley"),
+	)
+
+	res, err := http.Get(queryURL)
+
+	if err != nil {
+		t.Fatalf("err getting city info from handler; got %s, want nil", err)
+	}
+
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf(
+			"err getting city info from handler; got http status code %d, want %d",
+			res.StatusCode,
+			http.StatusNotFound,
+		)
+	}
+
+	body, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("err reading response body; got %v, want nil", err)
+	}
+
+	var errResp internalHttp.ErrorResponse
+	err = json.Unmarshal(body, &errResp)
+	if err != nil {
+		t.Fatalf("err unmarshalling json response; got %v want nil", err)
+	}
+
+	if !strings.Contains(errResp.Error, wisErr) {
+		t.Fatalf(
+			"unexpected error message in error response; got %v, want %v",
+			errResp.Error,
+			wisErr,
 		)
 	}
 }
