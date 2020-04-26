@@ -238,3 +238,64 @@ func TestHandler_GetCityInfo_ReturnsErrorResponseWhenWikiServiceErrors(t *testin
 		)
 	}
 }
+
+func TestHandler_GetCityInfo_ReturnsErrorResponseWhenWeatherAndWikiServicesError(t *testing.T) {
+	wsErr := "something weather went wrong"
+	ws := newWeatherService(
+		errors.New(wsErr),
+		weatherservice.Weather{},
+	)
+
+	wisErr := "something description went wrong"
+	wis := newWikiService(
+		errors.New(wisErr),
+		"",
+	)
+
+	logger := logrus.New()
+	logger.Out = ioutil.Discard
+	cis := cityinfoservice.NewCityInfoService(ws, wis, *logger)
+
+	handler := internalHttp.NewHandler(cis)
+	server := httptest.NewServer(handler)
+
+	queryURL := fmt.Sprintf(
+		"%s/city-info?name=%s",
+		server.URL,
+		url.QueryEscape("Mos Eisley"),
+	)
+
+	res, err := http.Get(queryURL)
+
+	if err != nil {
+		t.Fatalf("err getting city info from handler; got %s, want nil", err)
+	}
+
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf(
+			"err getting city info from handler; got http status code %d, want %d",
+			res.StatusCode,
+			http.StatusNotFound,
+		)
+	}
+
+	body, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("err reading response body; got %v, want nil", err)
+	}
+
+	var errResp internalHttp.ErrorResponse
+	err = json.Unmarshal(body, &errResp)
+	if err != nil {
+		t.Fatalf("err unmarshalling json response; got %v want nil", err)
+	}
+
+	if !strings.Contains(errResp.Error, wisErr) && !strings.Contains(errResp.Error, wsErr) {
+		t.Fatalf(
+			"unexpected error message in error response; got %q, want %q or %q",
+			errResp.Error,
+			wisErr,
+			wsErr,
+		)
+	}
+}

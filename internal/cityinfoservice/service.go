@@ -5,6 +5,7 @@ import (
 	"github.com/pdbrito/city-info/internal/weatherservice"
 	"github.com/pdbrito/city-info/internal/wikiservice"
 	"github.com/sirupsen/logrus"
+	"sync"
 )
 
 // CityInfoService defines our interface
@@ -36,22 +37,48 @@ func NewCityInfoService(ws weatherservice.WeatherService, wis wikiservice.Wikipe
 
 // CurrentStatus returns a CityInfo for the given city.
 func (c cityInfoService) CurrentStatus(name string) (CityInfo, error) {
-	weather, err := c.weatherService.CityWeather(name)
-	if err != nil {
-		err = fmt.Errorf("could not fetch weather for '%s': %v", name, err)
-		c.logger.Error(err)
-		return CityInfo{}, err
-	}
-	description, err := c.wikiService.CityDescription(name)
-	if err != nil {
-		err = fmt.Errorf("could not fetch description for '%s': %v", name, err)
-		c.logger.Error(err)
-		return CityInfo{}, err
-	}
+	var wg sync.WaitGroup
+	wg.Add(2)
 
-	return CityInfo{
-		Description:      description,
-		WeatherSituation: weather.Description,
-		Temperature:      fmt.Sprintf("%.1f", weather.Temperature),
-	}, nil
+	wChan, wsErr := make(chan weatherservice.Weather, 1), make(chan error, 1)
+	go func() {
+		defer wg.Done()
+		weather, err := c.weatherService.CityWeather(name)
+		if err != nil {
+			err = fmt.Errorf("could not fetch weather for '%s': %v", name, err)
+			c.logger.Error(err)
+			wsErr <- err
+			return
+		}
+		wChan <- weather
+	}()
+
+	dChan, wisErr := make(chan string, 1), make(chan error, 1)
+	go func() {
+		defer wg.Done()
+		description, err := c.wikiService.CityDescription(name)
+		if err != nil {
+			err = fmt.Errorf("could not fetch descrpition for '%s': %v", name, err)
+			c.logger.Error(err)
+			wisErr <- err
+			return
+		}
+		dChan <- description
+	}()
+
+	wg.Wait()
+
+	select {
+	case err := <-wsErr:
+		return CityInfo{}, err
+	case err := <-wisErr:
+		return CityInfo{}, err
+	default:
+		w := <-wChan
+		return CityInfo{
+			Description:      <-dChan,
+			WeatherSituation: w.Description,
+			Temperature:      fmt.Sprintf("%.1f", w.Temperature),
+		}, nil
+	}
 }
